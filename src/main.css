@@ -1,24 +1,3 @@
-@import 'assets/styles/variables/colors.css';
-@import 'assets/styles/variables/spacing.css';
-@import 'assets/styles/variables/typography.css';
-@import 'assets/styles/variables/shapes.css';
-@import 'assets/styles/variables/layout.css';
-@import 'assets/styles/variables/misc.css';
-
-@import 'assets/styles/base/typography.css';
-@import 'assets/styles/base/base.css';
-@import 'assets/styles/base/fontfaces.css';
-
-@import 'assets/styles/components/taipy-blocks.css';
-@import 'assets/styles/components/taipy-controls.css';
-@import 'assets/styles/components/card.css';
-@import 'assets/styles/components/sidebar.css';
-
-@import 'assets/styles/utilities/colors.css';
-@import 'assets/styles/utilities/typography.css';
-@import 'assets/styles/utilities/layout.css';
-@import 'assets/styles/utilities/spacing.css';
-
 /* Welcome user header */
 #dialog_button,
 #dialog_button:hover {

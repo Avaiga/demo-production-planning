@@ -1,11 +1,16 @@
 from pages.annex_scenario_manager.chart_md import ch_chart_md, ch_choice_chart, ch_show_pie, ch_layout_dict, ch_results
 from pages.annex_scenario_manager.parameters_md import pa_parameters_md, pa_param_selector, pa_param_selected, pa_choice_product_param, pa_product_param, solver_name, list_of_solvers
 
+from login.login import detect_inactive_session
+
+from taipy.gui import invoke_long_callback
+
 from taipy.gui.gui_actions import notify
 from taipy.gui import Icon
 import taipy as tp
 
 import datetime as dt
+import pandas as pd
 
 
 
@@ -199,6 +204,212 @@ Pie/Line chart
 |>
 |>
 """
+
+def update_scenario_selector(state, scenarios: list):
+    """
+    This function will update the scenario selectors. It will be used when
+    we create a new scenario. If there is a scenario that is created, we will
+    add its (id,name) in this list.
+
+    Args:
+        scenarios (list): a list of tuples (scenario,properties)
+    """
+
+    state.scenario_selector = [(s.id, s.name) if not s.is_primary else (
+        s.id, Icon('images/main.svg', s.name)) for s in scenarios]
+    state.scenario_counter = len(state.scenario_selector)
+    state.scenario_selector_two = state.scenario_selector.copy()
+
+    sm_tree_dict[state.sm_selected_year][state.sm_selected_month] = state.scenario_selector
+
+
+def make_primary(state):
+    tp.set_primary(tp.get(state.selected_scenario))
+    scenarios = [s for s in tp.get_scenarios(
+    ) if 'user' in s.properties and state.login == s.properties['user']]
+    update_scenario_selector(state, scenarios)
+    state.selected_scenario_is_primary = True
+
+
+def delete_scenario_fct(state):
+    if tp.get(state.selected_scenario).is_primary:
+        notify(
+            state,
+            "warning",
+            "You can't delete the primary scenario of the month")
+    else:
+        tp.delete(state.selected_scenario)
+        scenarios = [s for s in tp.get_scenarios(
+        ) if 'user' in s.properties and state.login == s.properties['user']]
+        update_scenario_selector(state, scenarios)
+
+        if state.scenario_counter != 0:
+            state.selected_scenario = state.scenario_selector[0][0]
+
+
+def create_new_scenario(state):
+    """
+    This function is used whan the 'create' button is pressed in the scenario_manager_md page.
+    See the scenario_manager_md page for more information. It will configure another scenario,
+    create it and submit it.
+
+    Args:
+        state (_type_): the state object of Taipy
+    """
+
+    # update the scenario counter
+    state.scenario_counter += 1
+
+    print("Creating scenario...")
+    name = "Scenario " + dt.datetime.now().strftime('%d-%b-%Y') + " Nb : " + \
+        str(state.scenario_counter)
+    scenario = tp.create_scenario(scenario_cfg, name=name)
+    scenario.properties['user'] = state.login
+
+    # get all the scenarios and their properties
+    print("Getting properties...")
+    scenarios = [s for s in tp.get_scenarios(
+    ) if 'user' in s.properties and state.login == s.properties['user']]
+
+    # change the scenario that is selected. The new scenario is the one that
+    # is selected
+    state.selected_scenario = scenario.id
+
+    # update the scenario selector
+    print("Updating scenario selector...")
+    update_scenario_selector(state, scenarios)
+
+    # submit this scenario
+    print("Submitting it...")
+    submit_scenario(state)
+
+
+def catch_error_in_submit(state):
+    """
+    This function is used to catch the error that can occur when we submit a scenario. When an
+    error is catched, a notification will appear and variables wil be changed to avoid any error.
+    The errors comes from the solution of the Cplex model where infeasible or unbounded problems
+    can happen if the fixed variables are wrongly set.
+
+    Args:
+        state (_type_): the state object of Taipy
+    """
+
+    # if our initial production is higher that our max capacity of production
+    if state.fixed_variables["Initial_Production_FPA"] > state.fixed_variables["Max_Capacity_FPA"]:
+        state.fixed_variables["Initial_Production_FPA"] = state.fixed_variables["Max_Capacity_FPA"]
+        notify(
+            state,
+            "warning",
+            "Value of initial production FPA is greater than max production A")
+
+    # if our initial production is higher that our max capacity of production
+    if state.fixed_variables["Initial_Production_FPB"] > state.fixed_variables["Max_Capacity_FPB"]:
+        state.fixed_variables["Initial_Production_FPB"] = state.fixed_variables["Max_Capacity_FPB"]
+        notify(
+            state,
+            "warning",
+            "Value of initial production FPB is greater than max production B")
+
+    # if our initial stock is higher that our max capacity of production
+    if state.fixed_variables["Initial_Stock_RPone"] > state.fixed_variables["Max_Stock_RPone"]:
+        state.fixed_variables["Initial_Stock_RPone"] = state.fixed_variables["Max_Stock_RPone"]
+        notify(
+            state,
+            "warning",
+            "Value of initial stock RP1 is greater than max stock 1")
+
+    # if our initial stock is higher that our max capacity of production
+    if state.fixed_variables["Initial_Stock_RPtwo"] > state.fixed_variables["Max_Stock_RPtwo"]:
+        state.fixed_variables["Initial_Stock_RPtwo"] = state.fixed_variables["Max_Stock_RPtwo"]
+        notify(
+            state,
+            "warning",
+            "Value of initial stock RP2 is greater than max stock 2")
+
+    # if our initial productions are higher that our max capacity of
+    # productions
+    if state.fixed_variables["Initial_Production_FPA"] + \
+            state.fixed_variables["Initial_Production_FPB"] > state.fixed_variables["Max_Capacity_of_FPA_and_FPB"]:
+                
+        state.fixed_variables["Initial_Production_FPA"] = int(state.fixed_variables["Max_Capacity_of_FPA_and_FPB"] / 2)
+        state.fixed_variables["Initial_Production_FPB"] = int(state.fixed_variables["Max_Capacity_of_FPA_and_FPB"] / 2)
+        
+        notify(
+            state,
+            "warning",
+            "Value of initial productions is greater than the max capacities")
+
+
+def submit_heavy(scenario):
+    tp.submit(scenario)
+
+def submit_status(state, status):
+    # update all the variables that we want to update (ch_results, pie_results
+    # and metrics)
+    update_variables(state)
+
+
+def submit_scenario(state):
+    """
+    This function will submit the scenario that is selected. It will be used when the 'submit' button is pressed
+    or when we create a new scenario. It checks if there is any errors then it will change the parameters of the
+    problem and submit the scenario. At the end, we update all the variables that we want to update.
+
+    Args:
+        state (_type_): the state object of Taipy
+
+    Returns:
+        _type_: _description_
+    """
+
+    detect_inactive_session(state)
+
+    # see if there are errors in the parameters that will be given to the
+    # scenario
+    catch_error_in_submit(state)
+
+    # getting the scenario
+    scenario = tp.get(state.selected_scenario)
+
+    # setting the scenario with the right parameters
+    scenario.fixed_variables.write(state.fixed_variables._dict)
+
+    # running the scenario in a long callback and update variables
+    invoke_long_callback(state, submit_heavy, [scenario], submit_status)
+
+
+def update_variables(state):
+    """This function is only used in the submit_scenario or when the selected_scenario changes. It will update all the useful variables that we want to update.
+
+    Args:
+        state (_type_): the state object of Taipy
+    """
+    # getting the selected scenario
+    scenario = tp.get(state.selected_scenario)
+
+    # read the result
+    state.ch_results = scenario.pipelines['pipeline'].results.read()
+    state.pie_results = pd.DataFrame(
+        {
+            "values": state.ch_results.sum(axis=0),
+            "labels": list(state.ch_results.columns)
+        })
+
+    state.sum_costs = state.ch_results['Total Cost'].sum()
+
+    bool_costs_of_stock = [c for c in state.ch_results.columns
+                           if 'Cost' in c and 'Total' not in c and 'Stock' in c]
+    state.sum_costs_of_stock = int(state.ch_results[bool_costs_of_stock].sum(axis=1)\
+                                                                        .sum(axis=0))
+
+    bool_costs_of_BO = [c for c in state.ch_results.columns
+                        if 'Cost' in c and 'Total' not in c and 'BO' in c]
+    state.sum_costs_of_BO = int(state.ch_results[bool_costs_of_BO].sum(axis=1)\
+                                                                  .sum(axis=0))
+
+
+
 
 # Button for configuring scenario
 sm_show_config_scenario_name = "Hide configuration"
