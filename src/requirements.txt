@@ -1,2 +1,2 @@
-taipy==3.0.0.dev4
+taipy==3.0.0
 PuLP==2.6.0
